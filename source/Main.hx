@@ -14,5 +14,6 @@ class Main extends Sprite
 
     FlxG.stage.quality = LOW;
     FlxG.scaleMode = new PixelPerfectScaleMode();
+    FlxG.camera.pixelPerfectRender = true;
   }
 }

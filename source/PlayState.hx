@@ -6,6 +6,8 @@ import flixel.FlxSprite;
 import flixel.FlxState;
 import flixel.group.FlxSpriteGroup;
 import flixel.math.FlxMath;
+import flixel.math.FlxPoint;
+import flixel.path.FlxPath;
 import flixel.tile.FlxTilemap;
 import flixel.ui.FlxBar;
 import flixel.util.FlxColor;
@@ -33,6 +35,7 @@ class PlayState extends FlxState implements Board
   public var tvOverlay:FlxSprite;
   public var panel:FlxSprite;
   public var letterbox:Letterbox;
+  public var attackSymbol:FlxSprite;
   public var hudCam:FlxCamera;
   public var hudArea:FlxSprite;
 
@@ -53,6 +56,7 @@ class PlayState extends FlxState implements Board
     tv = new Portrait(-500 + FlxG.width - 32, -500);
     tvOverlay = new FlxSprite(-500 + FlxG.width - 32, -500);
     letterbox = new Letterbox(-500, -500);
+    attackSymbol = new FlxSprite();
     hudArea = new FlxSprite(-500, -500);
 
     final proj = new LDtkProject();
@@ -60,16 +64,15 @@ class PlayState extends FlxState implements Board
     level.l_Tiles.render(tiles);
     level.l_Touchup.render(tiles);
 
+    tiles.pixelPerfectRender = true;
+
     underlayTilemap = new FlxTilemap();
     underlayTilemap.loadMapFromArray([for (i in 0...level.l_Tiles.cWid * level.l_Tiles.cHei) 0],
-      Std.int((FlxG.width - 32) / 16), Std.int(FlxG.height / 16),
-      AssetPaths.fog__png, 16, 16);
+      level.l_Tiles.cWid, level.l_Tiles.cHei, AssetPaths.fog__png, 16, 16);
 
     overlayTilemap = new FlxTilemap();
     overlayTilemap.loadMapFromArray([for (i in 0...(level.l_Tiles.cWid * level.l_Tiles.cHei)) 0],
-      Std.int((FlxG.width - 32) / 16), Std.int(FlxG.height / 16),
-      AssetPaths.fog__png, 16, 16);
-    overlayTilemap.kill();
+      level.l_Tiles.cWid, level.l_Tiles.cHei, AssetPaths.fog__png, 16, 16);
 
     panel.makeGraphic(32, FlxG.height, 0xFFE0F0E8);
     tvOverlay.loadGraphic(AssetPaths.tv_overlay__png__png);
@@ -82,6 +85,13 @@ class PlayState extends FlxState implements Board
     final mech = new Mech(48, 48, 3, 1, 10);
     friends.add(mech);
     portraitMap.set(mech, 'cat');
+
+    enemies.add(new Mech(48 + 32, 32, 3, 1, 10));
+    portraitMap.set(enemies.members[0], 'cat');
+
+    attackSymbol.loadGraphic(AssetPaths.fog__png, true, 16, 16);
+    attackSymbol.animation.frameIndex = 12;
+    attackSymbol.kill();
 
     for (i in 0...9)
     {
@@ -105,6 +115,7 @@ class PlayState extends FlxState implements Board
     add(healthBars);
     add(overlayTilemap);
     overlayTilemap.setTile(1, 1, 1);
+    add(attackSymbol);
     add(hudArea);
     add(panel);
     add(tv);
@@ -117,6 +128,11 @@ class PlayState extends FlxState implements Board
     FlxG.cameras.add(hudCam);
     hudCam.bgColor = FlxColor.TRANSPARENT;
     hudCam.follow(hudArea, NO_DEAD_ZONE);
+
+    FlxG.camera.minScrollX = 0;
+    FlxG.camera.minScrollY = 0;
+    FlxG.camera.maxScrollX = level.l_Tiles.pxWid;
+    FlxG.camera.maxScrollY = level.l_Tiles.pxHei;
   }
 
   override public function destroy()
@@ -129,21 +145,56 @@ class PlayState extends FlxState implements Board
   {
     super.update(elapsed);
 
-    if (FlxMath.pointInCoordinates(FlxG.mouse.x, FlxG.mouse.y, 0, 0,
-      FlxG.width - 32 - 1, FlxG.height - 1))
+    if (FlxMath.pointInCoordinates(FlxG.mouse.x, FlxG.mouse.y,
+      FlxG.camera.scroll.x, FlxG.camera.scroll.y,
+      FlxG.camera.scroll.x
+      + FlxG.width
+      - 32
+      - 1,
+      FlxG.camera.scroll.y
+      + FlxG.height
+      - 1))
     {
-      final ptX = Std.int((FlxG.mouse.x - FlxG.camera.x) / 16);
-      final ptY = Std.int((FlxG.mouse.y - FlxG.camera.y) / 16);
+      final ptX = Std.int(FlxG.mouse.x / 16);
+      final ptY = Std.int(FlxG.mouse.y / 16);
 
       // Highlight grid space
-      gridHighlight.x = Std.int(FlxG.mouse.x / 16) * 16 - 2;
-      gridHighlight.y = Std.int(FlxG.mouse.y / 16) * 16 - 2;
+      gridHighlight.x = ptX * 16 - 2;
+      gridHighlight.y = ptY * 16 - 2;
 
       if (FlxG.mouse.justPressed)
       {
         trySelect(ptX, ptY);
       }
     }
+
+    final camSpeed = 30;
+    var camMoved = false;
+    if (FlxG.keys.pressed.W)
+    {
+      camera.scroll.y -= camSpeed * elapsed;
+      camMoved = true;
+    }
+
+    if (FlxG.keys.pressed.A)
+    {
+      camera.scroll.x -= camSpeed * elapsed;
+      camMoved = true;
+    }
+
+    if (FlxG.keys.pressed.S)
+    {
+      camera.scroll.y += camSpeed * elapsed;
+      camMoved = true;
+    }
+
+    if (FlxG.keys.pressed.D)
+    {
+      camera.scroll.x += camSpeed * elapsed;
+      camMoved = true;
+    }
+
+    if (camMoved) {}
   }
 
   private function trySelect(x:Int, y:Int)
@@ -161,10 +212,18 @@ class PlayState extends FlxState implements Board
         tv.changePortrait(portrait);
       }
 
+      final moves = findReachable(mech);
       focused = mech;
-      clearOverlayTilemap();
-      calcMoveFog();
-      overlayTilemap.revive();
+      fillOverlayTilemap(1);
+      overlayTilemap.setTile(Math.round(mech.x / 16), Math.round(mech.y / 16),
+        0);
+      for (m in moves)
+      {
+        final endX = Math.round(m.tail().x / 16);
+        final endY = Math.round(m.tail().y / 16);
+
+        overlayTilemap.setTile(endX, endY, 0);
+      }
 
       return;
     }
@@ -173,16 +232,16 @@ class PlayState extends FlxState implements Board
     {
       tv.changePortrait('off');
       diamond.kill();
-      clearOverlayTilemap();
+      fillOverlayTilemap(0);
       focused = null;
     }
   }
 
-  private function clearOverlayTilemap()
+  private function fillOverlayTilemap(tile:Int)
   {
     for (y in 0...overlayTilemap.heightInTiles)
       for (x in 0...overlayTilemap.widthInTiles)
-        overlayTilemap.setTile(x, y, 0);
+        overlayTilemap.setTile(x, y, tile);
   }
 
   private function calcMoveFog()
@@ -217,9 +276,23 @@ class PlayState extends FlxState implements Board
     return null;
   }
 
-  public function listCommands(mech:FlxSprite):Array<Array<Command>>
+  private function findReachable_inner(paths:Array<FlxPath>, stamina:Int,
+      x:Int, y:Int):Bool
   {
-    return [];
+    if (stamina == 0)
+      return false;
+
+    return true;
+  }
+
+  private function findReachable(mech:FlxSprite):Array<FlxPath>
+  {
+    return [
+      new FlxPath([new FlxPoint(mech.x,
+        mech.y), new FlxPoint(mech.x + 16, mech.y)]),
+      new FlxPath([new FlxPoint(mech.x,
+        mech.y), new FlxPoint(mech.x, mech.y + 16)])
+    ];
   }
 
   public function move(sprite:FlxSprite, movements:Array<Compass>)
